@@ -1,0 +1,30 @@
+{
+  "name": "splitbill",
+  "private": true,
+  "packageManager": "pnpm@10.29.2",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @splitbill/api --filter @splitbill/web dev",
+    "dev:api": "pnpm --filter @splitbill/api dev",
+    "dev:web": "pnpm --filter @splitbill/web dev",
+    "build": "pnpm --filter @splitbill/shared build && pnpm --filter @splitbill/api build && pnpm --filter @splitbill/web build",
+    "lint": "pnpm --filter @splitbill/api lint && pnpm --filter @splitbill/web lint",
+    "typecheck": "pnpm --filter @splitbill/shared build && pnpm --filter @splitbill/shared typecheck && pnpm --filter @splitbill/api typecheck && pnpm --filter @splitbill/web typecheck",
+    "test": "pnpm --filter @splitbill/shared test && pnpm --filter @splitbill/api test && pnpm --filter @splitbill/web test",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter @splitbill/api prisma:migrate",
+    "db:generate": "pnpm --filter @splitbill/api prisma:generate"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "prisma",
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "unrs-resolver"
+    ]
+  }
+}

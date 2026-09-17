@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ReceiptStatus {
+  PROCESSING
+  REVIEW
+  COLLECTING
+  COMPLETED
+}
+
+enum PaymentMethod {
+  CASH
+  QR
+}
+
+model Receipt {
+  id                 String           @id @default(uuid())
+  currency           String           @default("MYR")
+  status             ReceiptStatus    @default(REVIEW)
+  subtotalCents      Int?
+  discountCents      Int?
+  serviceChargeCents Int?
+  taxCents           Int?
+  roundingCents      Int?
+  totalCents         Int?
+  imagePath          String?
+  parserProvider     String?
+  parserRawJson      Json?
+  validationIssues   Json?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  items              ReceiptItem[]
+  people             Person[]
+  assignments        ItemAssignment[]
+}
+
+model ReceiptItem {
+  id               String           @id @default(uuid())
+  receiptId        String
+  receipt          Receipt          @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  name             String
+  quantity         Int
+  unitPriceCents   Int
+  totalPriceCents  Int
+  assignedQuantity Int              @default(0)
+  sortOrder        Int              @default(0)
+  assignments      ItemAssignment[]
+
+  @@index([receiptId])
+}
+
+model Person {
+  id             String           @id @default(uuid())
+  receiptId      String
+  receipt        Receipt          @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  name           String
+  sortOrder      Int              @default(0)
+  paymentMethod  PaymentMethod?
+  assignments    ItemAssignment[]
+
+  @@index([receiptId])
+}
+
+model ItemAssignment {
+  id        String      @id @default(uuid())
+  receiptId String
+  receipt   Receipt     @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  personId  String
+  person    Person      @relation(fields: [personId], references: [id], onDelete: Cascade)
+  itemId    String
+  item      ReceiptItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  quantity  Int
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([personId, itemId])
+  @@index([receiptId])
+}

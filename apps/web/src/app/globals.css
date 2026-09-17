@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+:root {
+  --table: #ded2c0;
+  --docket: #fdfaf4;
+  --inset: #f6efe2;
+  --ink: #201c17;
+  --mute: #6d6459;
+  --rule: #e2d8c8;
+  --perf: #c7bba7;
+  --amber: #9a6418;
+  --pandan: #2f6b4a;
+  --alert: #8c3520;
+  --tan: #e9e1d2;
+  --faint: #a2988a;
+  --locked: #c0b5a4;
+}
+
+@theme inline {
+  --color-table: var(--table);
+  --color-docket: var(--docket);
+  --color-inset: var(--inset);
+  --color-ink: var(--ink);
+  --color-mute: var(--mute);
+  --color-rule: var(--rule);
+  --color-perf: var(--perf);
+  --color-amber: var(--amber);
+  --color-pandan: var(--pandan);
+  --color-alert: var(--alert);
+  --color-tan: var(--tan);
+  --color-faint: var(--faint);
+  --color-locked: var(--locked);
+  --font-sans: var(--font-vietnam);
+  --font-mono: var(--font-dm-mono);
+}
+
+html,
+body {
+  background: var(--table);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-vietnam), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  a {
+    color: inherit;
+  }
+}
+
+*:focus-visible {
+  outline: 3px solid var(--amber);
+  outline-offset: 2px;
+}
+
+.docket-perf-top {
+  height: 9px;
+  background-color: transparent;
+  background-image: radial-gradient(circle at 7px 0, transparent 0 5px, var(--docket) 5.5px);
+  background-size: 14px 9px;
+  background-repeat: repeat-x;
+}
+
+.docket-perf-bottom {
+  height: 9px;
+  background-image: radial-gradient(circle at 7px 9px, transparent 0 5px, var(--docket) 5.5px);
+  background-size: 14px 9px;
+  background-repeat: repeat-x;
+}
+
+.leader {
+  flex: 1 1 auto;
+  min-width: 12px;
+  border-bottom: 1px dotted var(--perf);
+  transform: translateY(-4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
