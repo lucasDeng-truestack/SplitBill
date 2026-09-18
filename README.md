@@ -106,9 +106,77 @@ Errors:
 { "error": { "code": "OVER_ALLOCATION", "message": "..." } }
 ```
 
+## Deploy
+
+Production split:
+
+| Piece | Host |
+| --- | --- |
+| Web | Vercel (`apps/web`) |
+| API | Railway (Docker image at repo root) |
+| Postgres | Neon |
+| Receipt photos | Private Cloudflare R2 bucket |
+| Vision | OpenAI (`gpt-4o`) |
+
+OpenAI must have **billing credits**, or receipt photos will fail.
+
+### 1. Neon
+
+Create a project. Copy both connection strings (`sslmode=require`):
+
+- `DATABASE_URL` — pooled
+- `DIRECT_URL` — unpooled / direct (Prisma migrations)
+
+### 2. Cloudflare R2
+
+Create a **private** bucket (receipts can include card numbers). Create an S3 API token with object read/write. You need:
+
+- `R2_ACCOUNT_ID`
+- `R2_BUCKET`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+
+Do not attach a public custom domain.
+
+### 3. Railway (API)
+
+New service from this GitHub repo. Builder: **Dockerfile** (root `Dockerfile`). Health check: `GET /health`.
+
+Environment:
+
+```text
+NODE_ENV=production
+DATABASE_URL=
+DIRECT_URL=
+WEB_ORIGIN=https://<your-vercel-app>.vercel.app
+ALLOW_VERCEL_PREVIEWS=true
+RECEIPT_PARSER=openai
+OPENAI_API_KEY=
+OPENAI_RECEIPT_MODEL=gpt-4o
+STORAGE=r2
+R2_ACCOUNT_ID=
+R2_BUCKET=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+```
+
+Railway injects `PORT`. The image runs `prisma migrate deploy` then the API. After the first deploy, copy the public API URL (no trailing slash).
+
+### 4. Vercel (web)
+
+Import the same GitHub repo.
+
+- Framework: Next.js
+- Root Directory: `apps/web`
+- Environment: `NEXT_PUBLIC_API_URL=https://<railway-api-host>` (no trailing slash)
+
+Redeploy after setting the API URL. Then put the Vercel origin into Railway `WEB_ORIGIN` and redeploy the API if you had a placeholder.
+
+Preview deploys need `ALLOW_VERCEL_PREVIEWS=true` on Railway so `*.vercel.app` can call the API.
+
 ## MVP limitations
 
 - No login; possession of a receipt UUID is access.
-- Images stored on local disk (`apps/api/uploads`).
+- Local development stores images on disk (`apps/api/uploads`). Production stores them privately in R2.
 - No voice or natural-language claims.
 - No equal-split shared items in the UI (schema can grow later).

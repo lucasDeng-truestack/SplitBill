@@ -67,7 +67,7 @@ export function toReceiptDto(receipt: ReceiptWithRelations): ReceiptDto {
     taxCents: receipt.taxCents,
     roundingCents: receipt.roundingCents,
     totalCents: receipt.totalCents,
-    imagePath: receipt.imagePath,
+    imagePath: null,
     parserProvider: receipt.parserProvider,
     validationIssues: asIssues(receipt.validationIssues),
     createdAt: receipt.createdAt.toISOString(),

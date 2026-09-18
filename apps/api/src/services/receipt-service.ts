@@ -1,6 +1,3 @@
-import { mkdir, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
 import {
   majorToCents,
   receiptRangeStart,
@@ -9,13 +6,13 @@ import {
   type ReceiptListRange,
 } from "@splitbill/shared";
 import type { ReceiptStatus } from "@prisma/client";
-import { config } from "../config.js";
 import { InvalidStatusError, NotFoundError, ParseFailedError } from "../errors.js";
 import { logger } from "../logger.js";
 import { prisma } from "../prisma.js";
 import { validateParsedReceipt } from "../domain/validate-receipt.js";
 import { createReceiptParser } from "../parsers/factory.js";
 import { toReceiptDto, toReceiptListItemDto } from "../mappers/receipt-mapper.js";
+import { createObjectStorage, receiptObjectKey } from "../storage/index.js";
 
 const receiptInclude = {
   items: true,
@@ -54,10 +51,11 @@ export async function deleteReceipts(range: ReceiptListRange = "all") {
     select: { id: true, imagePath: true },
   });
   const deleted = await prisma.receipt.deleteMany({ where });
+  const storage = createObjectStorage();
   await Promise.all(
     doomed.map(async (row) => {
       if (!row.imagePath) return;
-      await unlink(row.imagePath).catch(() => undefined);
+      await storage.delete(row.imagePath);
     }),
   );
   logger.info({ range, deleted: deleted.count }, "receipts cleared");
@@ -88,10 +86,12 @@ export async function createReceiptFromImage(file: { buffer: Buffer; mimetype: s
     "receipt upload received",
   );
 
-  await mkdir(config.uploadDir, { recursive: true });
-  const filename = `${randomUUID()}${path.extname(file.originalname) || ".jpg"}`;
-  const imagePath = path.join(config.uploadDir, filename);
-  await writeFile(imagePath, file.buffer);
+  const imagePath = receiptObjectKey(file.originalname);
+  await createObjectStorage().put({
+    key: imagePath,
+    bytes: file.buffer,
+    mimeType: file.mimetype,
+  });
 
   const parser = createReceiptParser();
   let parsed;
@@ -102,6 +102,7 @@ export async function createReceiptFromImage(file: { buffer: Buffer; mimetype: s
       filename: file.originalname,
     });
   } catch (error) {
+    await createObjectStorage().delete(imagePath);
     logger.error({ err: error }, "receipt parsing failed before persistence");
     throw error instanceof ParseFailedError
       ? error

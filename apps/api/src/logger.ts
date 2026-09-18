@@ -8,7 +8,10 @@ export const logger = pino({
     paths: [
       "req.headers.authorization",
       "OPENAI_API_KEY",
+      "R2_SECRET_ACCESS_KEY",
+      "R2_ACCESS_KEY_ID",
       "*.apiKey",
+      "*.secretAccessKey",
       "*.bytes",
     ],
     remove: true,

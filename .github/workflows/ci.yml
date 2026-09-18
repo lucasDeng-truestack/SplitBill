@@ -40,5 +40,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @splitbill/api prisma:deploy
+      - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test

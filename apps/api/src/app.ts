@@ -1,13 +1,21 @@
 import cors from "cors";
 import express from "express";
+import helmet from "helmet";
 import { pinoHttp } from "pino-http";
-import { config } from "./config.js";
+import { isAllowedOrigin } from "./config.js";
 import { logger } from "./logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
+import { prisma } from "./prisma.js";
 import { v1Router } from "./routes/v1.js";
 
 export function createApp() {
   const app = express();
+  app.set("trust proxy", 1);
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+    }),
+  );
   app.use(
     pinoHttp({
       logger,
@@ -16,11 +24,23 @@ export function createApp() {
       },
     }),
   );
-  app.use(cors({ origin: config.webOrigins.length === 1 ? config.webOrigins[0] : config.webOrigins }));
+  app.use(
+    cors({
+      origin(origin, callback) {
+        callback(null, isAllowedOrigin(origin));
+      },
+    }),
+  );
   app.use(express.json({ limit: "2mb" }));
 
-  app.get("/health", (_req, res) => {
-    res.json({ ok: true });
+  app.get("/health", async (_req, res) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      res.json({ ok: true });
+    } catch (error) {
+      logger.error({ err: error }, "health check failed");
+      res.status(503).json({ ok: false });
+    }
   });
 
   app.use("/api/v1", v1Router);

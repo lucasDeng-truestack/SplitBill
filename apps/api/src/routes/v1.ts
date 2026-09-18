@@ -1,4 +1,5 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import multer from "multer";
 import {
   completeReceiptBodySchema,
@@ -48,6 +49,19 @@ function queryValue(req: { query: Record<string, unknown> }, name: string): stri
   return undefined;
 }
 
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: "RATE_LIMITED",
+      message: "Too many receipts. Try again in a few minutes.",
+    },
+  },
+});
+
 export const v1Router = Router();
 
 v1Router.get("/receipts", async (req, res, next) => {
@@ -68,7 +82,7 @@ v1Router.delete("/receipts", async (req, res, next) => {
   }
 });
 
-v1Router.post("/receipts", upload.single("image"), async (req, res, next) => {
+v1Router.post("/receipts", uploadLimiter, upload.single("image"), async (req, res, next) => {
   try {
     if (req.body?.manual === "true" || req.body?.manual === true) {
       res.status(201).json({ receipt: await receiptService.createManualReceipt() });

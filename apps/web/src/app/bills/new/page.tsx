@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Docket } from "@/components/docket";
 import { ReceiptCamera } from "@/components/receipt-camera";
@@ -44,9 +45,9 @@ export default function NewBillPage() {
 
   return (
     <Docket>
-      <a href="/" className="inline-flex min-h-11 items-center gap-1.5 text-sm text-mute no-underline hover:text-ink">
+      <Link href="/" className="inline-flex min-h-11 items-center gap-1.5 text-sm text-mute no-underline hover:text-ink">
         ← Home
-      </a>
+      </Link>
       <h1 className="mt-2.5 max-w-[18ch] text-[34px] leading-[1.08] font-semibold tracking-[-0.03em]">Photograph the bill</h1>
       <p className="mt-2 max-w-[32ch] text-base leading-snug text-mute">
         Flatten it out, get all the lines in frame. You’ll see the photo before we read it.

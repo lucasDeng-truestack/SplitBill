@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 const STEPS = ["Review", "Collect", "Summary"] as const;
@@ -18,9 +19,9 @@ export function StepPath({
 
   return (
     <div>
-      <a href="/" className="inline-flex min-h-11 items-center text-sm text-mute no-underline hover:text-ink">
+      <Link href="/" className="inline-flex min-h-11 items-center text-sm text-mute no-underline hover:text-ink">
         ← Home
-      </a>
+      </Link>
       <nav aria-label="Bill steps" className="flex items-center gap-0 pb-[18px]">
       {STEPS.map((step, index) => {
         const active = step === current;
@@ -43,9 +44,9 @@ export function StepPath({
             {active ? (
               node
             ) : (
-              <a href={hrefFor(step)} className="text-inherit no-underline hover:text-ink">
+              <Link href={hrefFor(step)} className="text-inherit no-underline hover:text-ink">
                 {node}
-              </a>
+              </Link>
             )}
             {index < STEPS.length - 1 ? (
               <span className="mx-[7px] h-px min-w-2 flex-1 border-t border-dashed border-perf" />
