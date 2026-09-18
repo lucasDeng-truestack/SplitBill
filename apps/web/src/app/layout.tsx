@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
 import { Be_Vietnam_Pro, DM_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -24,7 +25,7 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${vietnam.variable} ${dmMono.variable} h-full antialiased`} suppressHydrationWarning>
       <body className="min-h-full bg-table text-ink" suppressHydrationWarning>
