@@ -24,16 +24,22 @@ function required(name: string, fallback?: string): string {
 
 const r2AccountId = process.env.R2_ACCOUNT_ID ?? "";
 
+const webOrigins = (process.env.WEB_ORIGIN ?? (isProduction ? "" : "http://localhost:3030"))
+  .split(",")
+  .map((origin) => origin.trim().replace(/\/$/u, ""))
+  .filter(Boolean);
+
+const onlyLocalhostOrigins =
+  webOrigins.length === 0 || webOrigins.every((origin) => origin.includes("localhost"));
+
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   isProduction,
   port: Number(process.env.PORT ?? process.env.API_PORT ?? 4000),
   host: process.env.API_HOST ?? "0.0.0.0",
-  webOrigins: (process.env.WEB_ORIGIN ?? "http://localhost:3030")
-    .split(",")
-    .map((origin) => origin.trim().replace(/\/$/u, ""))
-    .filter(Boolean),
-  allowVercelPreviews: process.env.ALLOW_VERCEL_PREVIEWS === "true",
+  webOrigins,
+  // First Railway boot often happens before a Vercel URL exists.
+  allowVercelPreviews: process.env.ALLOW_VERCEL_PREVIEWS === "true" || (isProduction && onlyLocalhostOrigins),
   databaseUrl: isProduction
     ? required("DATABASE_URL")
     : required("DATABASE_URL", "postgresql://splitbill:splitbill@localhost:5436/splitbill"),
@@ -61,12 +67,6 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
 
 export function assertProductionConfig(): void {
   if (!isProduction) return;
-  if (config.webOrigins.length === 0) {
-    throw new Error("WEB_ORIGIN is required in production");
-  }
-  if (config.webOrigins.every((origin) => origin.includes("localhost"))) {
-    throw new Error("WEB_ORIGIN must be the public Vercel origin in production");
-  }
   if (config.receiptParser !== "openai" || !config.openaiApiKey) {
     throw new Error("Production requires RECEIPT_PARSER=openai and OPENAI_API_KEY");
   }
