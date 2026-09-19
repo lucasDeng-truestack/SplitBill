@@ -3,7 +3,7 @@
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatMoney } from "@splitbill/shared";
-import type { PaymentMethod, PersonDto, ReceiptDto, ReceiptItemDto } from "@splitbill/shared";
+import type { BillSummaryDto, PaymentMethod, PersonDto, PersonSummaryDto, ReceiptDto, ReceiptItemDto } from "@splitbill/shared";
 import { Docket } from "@/components/docket";
 import { Money } from "@/components/money";
 import { PersonChip } from "@/components/person-chip";
@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 export default function CollectPage() {
   const { id } = useParams<{ id: string }>();
   const [receipt, setReceipt] = useState<ReceiptDto | null>(null);
+  const [summary, setSummary] = useState<BillSummaryDto | null>(null);
   const [personId, setPersonId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
@@ -27,8 +28,12 @@ export default function CollectPage() {
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
-    const { receipt: data } = await api.getReceipt(id);
+    const [{ receipt: data }, { summary: nextSummary }] = await Promise.all([
+      api.getReceipt(id),
+      api.getSummary(id),
+    ]);
     setReceipt(data);
+    setSummary(nextSummary);
     return data;
   }, [id]);
 
@@ -46,6 +51,7 @@ export default function CollectPage() {
 
   const person = receipt?.people.find((row) => row.id === personId) ?? null;
   const selected = receipt?.items.find((item) => item.id === selectedId) ?? null;
+  const personSummary = summary?.people.find((row) => row.personId === personId) ?? null;
 
   const personItems = useMemo(() => {
     if (!receipt || !person) return [];
@@ -58,7 +64,7 @@ export default function CollectPage() {
       .filter((row): row is { assignment: (typeof receipt.assignments)[number]; item: ReceiptItemDto } => row != null);
   }, [receipt, person]);
 
-  const owedCents = personItems.reduce((sum, row) => sum + row.item.unitPriceCents * row.assignment.quantity, 0);
+  const owedCents = personSummary?.amountOwedCents ?? 0;
 
   async function addClaim() {
     if (!person || !selected) return;
@@ -166,7 +172,8 @@ export default function CollectPage() {
   const remainingUnclaimed = receipt.items.some((item) => item.remainingQuantity > 0);
   const collectedCount = receipt.people.length;
   const unpaidCount = receipt.people.filter((seat) => seat.paymentMethod == null).length;
-  const pocket = pocketTotals(receipt);
+  const pocketCash = summary?.cashTotalCents ?? 0;
+  const pocketQr = summary?.qrTotalCents ?? 0;
 
   if (adding || !person) {
     return (
@@ -222,7 +229,7 @@ export default function CollectPage() {
             I’m with them
           </Button>
         </form>
-        <PocketLine cash={pocket.cash} qr={pocket.qr} currency={receipt.currency} />
+        <PocketLine cash={pocketCash} qr={pocketQr} currency={receipt.currency} />
         {error ? <p className="mt-4 text-sm text-alert">{error}</p> : null}
       </Docket>
     );
@@ -361,7 +368,7 @@ export default function CollectPage() {
         })}
       </div>
 
-      {personItems.length > 0 ? (
+      {personItems.length > 0 || (personSummary && personSummary.amountOwedCents > 0) ? (
         <div className="mt-3.5 rounded-[10px] bg-inset p-3.5">
           <p className="m-0 font-mono text-[11px] text-pandan">
             {person.name}’s share · {personItems.length === 1 ? "1 item" : `${personItems.length} items`}
@@ -386,36 +393,40 @@ export default function CollectPage() {
                 </button>
               </div>
             ))}
+            {personSummary ? <ChargeLines person={personSummary} currency={receipt.currency} /> : null}
           </div>
         </div>
       ) : (
         <p className="mt-3.5 text-sm text-mute">Nothing added yet — tap a line above, then take the money.</p>
       )}
 
-      <PocketLine cash={pocket.cash} qr={pocket.qr} currency={receipt.currency} />
+      <PocketLine cash={pocketCash} qr={pocketQr} currency={receipt.currency} />
       {error ? <p className="mt-4 text-sm text-alert">{error}</p> : null}
     </Docket>
   );
 }
 
-function shareCents(receipt: ReceiptDto, personId: string) {
-  return receipt.assignments
-    .filter((assignment) => assignment.personId === personId)
-    .reduce((sum, assignment) => {
-      const item = receipt.items.find((row) => row.id === assignment.itemId);
-      return item ? sum + item.unitPriceCents * assignment.quantity : sum;
-    }, 0);
-}
+function ChargeLines({ person, currency }: { person: PersonSummaryDto; currency: string }) {
+  const rows = [
+    { label: "Service charge", cents: person.serviceChargeCents },
+    { label: "Tax", cents: person.taxCents },
+    { label: "Discount", cents: -person.discountCents },
+    { label: "Rounding", cents: person.roundingCents },
+  ].filter((row) => row.cents !== 0);
 
-function pocketTotals(receipt: ReceiptDto) {
-  let cash = 0;
-  let qr = 0;
-  for (const seat of receipt.people) {
-    const amount = shareCents(receipt, seat.id);
-    if (seat.paymentMethod === "CASH") cash += amount;
-    if (seat.paymentMethod === "QR") qr += amount;
-  }
-  return { cash, qr };
+  if (rows.length === 0) return null;
+
+  return (
+    <>
+      {rows.map((row) => (
+        <div key={row.label} className="flex items-baseline gap-2">
+          <span className="text-[15px] text-mute">{row.label}</span>
+          <span className="leader" />
+          <Money cents={row.cents} currency={currency} className="text-sm text-mute" />
+        </div>
+      ))}
+    </>
+  );
 }
 
 function seatVariant(seat: PersonDto, currentId: string | null) {

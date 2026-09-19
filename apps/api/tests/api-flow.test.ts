@@ -77,6 +77,45 @@ describe("receipt API flow", () => {
     );
   });
 
+  it("includes scanned tax in each person's amount owed and cash collected", async () => {
+    const created = await request(app).post("/api/v1/receipts").field("manual", "true");
+    expect(created.status).toBe(201);
+    const taxReceiptId = created.body.receipt.id as string;
+
+    const item = await request(app)
+      .post(`/api/v1/receipts/${taxReceiptId}/items`)
+      .send({ name: "Nasi lemak", quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000 });
+    expect(item.status).toBe(201);
+    const itemId = item.body.item.id as string;
+
+    const patched = await request(app)
+      .patch(`/api/v1/receipts/${taxReceiptId}`)
+      .send({ taxCents: 60, totalCents: 1060 });
+    expect(patched.status).toBe(200);
+    expect(patched.body.receipt.taxCents).toBe(60);
+
+    const person = await request(app).post(`/api/v1/receipts/${taxReceiptId}/people`).send({ name: "Aisha" });
+    const personId = person.body.person.id as string;
+
+    const claim = await request(app)
+      .post(`/api/v1/receipts/${taxReceiptId}/assignments`)
+      .send({ personId, itemId, quantity: 1 });
+    expect(claim.status).toBe(201);
+
+    const summary = await request(app).get(`/api/v1/receipts/${taxReceiptId}/summary`);
+    expect(summary.status).toBe(200);
+    const seat = summary.body.summary.people.find((row: { personId: string }) => row.personId === personId);
+    expect(seat.itemSubtotalCents).toBe(1000);
+    expect(seat.taxCents).toBe(60);
+    expect(seat.amountOwedCents).toBe(1060);
+
+    await request(app).patch(`/api/v1/receipts/${taxReceiptId}/people/${personId}`).send({ paymentMethod: "CASH" });
+    const paid = await request(app).get(`/api/v1/receipts/${taxReceiptId}/summary`);
+    expect(paid.body.summary.cashTotalCents).toBe(1060);
+
+    await prisma.receipt.delete({ where: { id: taxReceiptId } });
+  });
+
   it("lists receipts by day range and can clear them", async () => {
     const created = await request(app).post("/api/v1/receipts").field("manual", "true");
     expect(created.status).toBe(201);
