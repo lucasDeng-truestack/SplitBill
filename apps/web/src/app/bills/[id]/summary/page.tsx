@@ -140,6 +140,20 @@ export default function SummaryPage() {
                   <Money cents={item.lineTotalCents} currency={summary.currency} className="text-[13px] text-mute" />
                 </div>
               ))}
+              {[
+                { label: "Service charge", cents: person.serviceChargeCents },
+                { label: "Tax", cents: person.taxCents },
+                { label: "Discount", cents: -person.discountCents },
+                { label: "Rounding", cents: person.roundingCents },
+              ]
+                .filter((row) => row.cents !== 0)
+                .map((row) => (
+                  <div key={row.label} className="flex items-baseline gap-2">
+                    <span className="text-sm text-mute">{row.label}</span>
+                    <span className="leader" />
+                    <Money cents={row.cents} currency={summary.currency} className="text-[13px] text-mute" />
+                  </div>
+                ))}
             </div>
           </div>
         ))}
