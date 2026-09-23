@@ -1,15 +1,17 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { majorToCents } from "@splitbill/shared";
 import type { ReceiptDto } from "@splitbill/shared";
 import { Docket } from "@/components/docket";
+import { ItemFind } from "@/components/item-find";
 import { Money } from "@/components/money";
 import { StepPath } from "@/components/step-path";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError, api } from "@/lib/api";
+import { itemMatchesQuery } from "@/lib/filter-items";
 
 type DraftItem = {
   id?: string;
@@ -59,6 +61,12 @@ export default function ReviewPage() {
   const [total, setTotal] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [find, setFind] = useState("");
+
+  const visibleItems = useMemo(
+    () => items.map((item, index) => ({ item, index })).filter(({ item }) => itemMatchesQuery(item.name, find)),
+    [items, find],
+  );
 
   useEffect(() => {
     api
@@ -151,12 +159,25 @@ export default function ReviewPage() {
         </div>
       ) : null}
 
-      <div className="mt-5 flex justify-between px-0.5 font-mono text-[11px] text-mute">
+      <ItemFind
+        value={find}
+        onChange={setFind}
+        visibleCount={visibleItems.length}
+        totalCount={items.length}
+        placeholder="Find a line"
+      />
+
+      <div className="mt-3 flex justify-between px-0.5 font-mono text-[11px] text-mute">
         <span>Item</span>
         <span>Qty × unit · line</span>
       </div>
       <div className="mt-1.5 flex flex-col">
-        {items.map((item, index) => (
+        {find.trim() && visibleItems.length === 0 ? (
+          <p className="border-t border-dashed border-perf px-0.5 py-4 text-sm text-mute">
+            No lines match that. Clear the find box to see the whole slip.
+          </p>
+        ) : null}
+        {visibleItems.map(({ item, index }) => (
           <div key={item.id ?? index} className="border-t border-dashed border-perf px-0.5 py-[13px]">
             <div className="flex items-baseline gap-2">
               <Input
@@ -202,7 +223,10 @@ export default function ReviewPage() {
         type="button"
         variant="quiet"
         className="mt-3"
-        onClick={() => setItems((current) => [...current, { name: "", quantity: "1", unitPrice: "", totalPrice: "" }])}
+        onClick={() => {
+          setFind("");
+          setItems((current) => [...current, { name: "", quantity: "1", unitPrice: "", totalPrice: "" }]);
+        }}
       >
         Add a line we missed
       </Button>

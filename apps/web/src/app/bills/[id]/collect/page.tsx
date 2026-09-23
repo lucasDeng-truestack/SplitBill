@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatMoney } from "@splitbill/shared";
 import type { BillSummaryDto, PaymentMethod, PersonDto, PersonSummaryDto, ReceiptDto, ReceiptItemDto } from "@splitbill/shared";
 import { Docket } from "@/components/docket";
+import { ItemFind } from "@/components/item-find";
 import { Money } from "@/components/money";
 import { PersonChip } from "@/components/person-chip";
 import { QuantityStepper } from "@/components/quantity-stepper";
@@ -12,6 +13,7 @@ import { StepPath } from "@/components/step-path";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError, api } from "@/lib/api";
+import { filterItemsByQuery } from "@/lib/filter-items";
 import { firstName } from "@/lib/people";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +28,7 @@ export default function CollectPage() {
   const [quantity, setQuantity] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [find, setFind] = useState("");
 
   const refresh = useCallback(async () => {
     const [{ receipt: data }, { summary: nextSummary }] = await Promise.all([
@@ -63,6 +66,11 @@ export default function CollectPage() {
       })
       .filter((row): row is { assignment: (typeof receipt.assignments)[number]; item: ReceiptItemDto } => row != null);
   }, [receipt, person]);
+
+  const tableItems = useMemo(
+    () => (receipt ? filterItemsByQuery(receipt.items, find) : []),
+    [receipt, find],
+  );
 
   const owedCents = personSummary?.amountOwedCents ?? 0;
 
@@ -112,6 +120,7 @@ export default function CollectPage() {
     setAdding(false);
     setSelectedId(null);
     setQuantity(1);
+    setFind("");
     setError(null);
   }
 
@@ -120,6 +129,7 @@ export default function CollectPage() {
     setName("");
     setSelectedId(null);
     setQuantity(1);
+    setFind("");
     setError(null);
   }
 
@@ -325,8 +335,18 @@ export default function CollectPage() {
       <div className="mt-5 border-t border-dashed border-perf" />
 
       <p className="mt-4 font-mono text-[11px] text-mute">Still on the table</p>
+      <ItemFind
+        value={find}
+        onChange={setFind}
+        visibleCount={tableItems.length}
+        totalCount={receipt.items.length}
+        placeholder="Find what they ordered"
+      />
       <div className="mt-2 flex flex-col gap-0.5">
-        {receipt.items.map((item) => {
+        {find.trim() && tableItems.length === 0 ? (
+          <p className="px-1.5 py-3 text-sm text-mute">Nothing matches that. Clear the find box to see the table.</p>
+        ) : null}
+        {tableItems.map((item) => {
           const claimed = item.remainingQuantity <= 0;
           const open = selectedId === item.id && !claimed;
           return (
