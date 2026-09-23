@@ -6,7 +6,13 @@ export type ReceiptImage = {
   filename?: string;
 };
 
+export type ReceiptParseInput = ReceiptImage | ReceiptImage[];
+
+export function asReceiptImages(input: ReceiptParseInput): ReceiptImage[] {
+  return Array.isArray(input) ? input : [input];
+}
+
 export interface ReceiptParser {
   readonly provider: string;
-  parseReceipt(input: ReceiptImage): Promise<ParsedReceipt>;
+  parseReceipt(input: ReceiptParseInput): Promise<ParsedReceipt>;
 }

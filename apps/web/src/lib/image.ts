@@ -1,4 +1,4 @@
-export async function compressImage(file: File, maxEdge = 1600, quality = 0.82): Promise<File> {
+export async function compressImage(file: File, maxEdge = 2048, quality = 0.88): Promise<File> {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
   const width = Math.round(bitmap.width * scale);
@@ -31,6 +31,6 @@ export function captureFromVideo(video: HTMLVideoElement): Promise<File> {
         return;
       }
       resolve(new File([blob], "receipt.jpg", { type: "image/jpeg" }));
-    }, "image/jpeg", 0.88);
+    }, "image/jpeg", 0.9);
   });
 }

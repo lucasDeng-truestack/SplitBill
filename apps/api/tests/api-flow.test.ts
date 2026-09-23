@@ -148,4 +148,16 @@ describe("receipt API flow", () => {
 
     await prisma.receipt.delete({ where: { id: oldId } });
   });
+
+  it("accepts several photos of the same long slip", async () => {
+    const image = Buffer.from("fake-image");
+    const created = await request(app)
+      .post("/api/v1/receipts")
+      .attach("images", image, { filename: "receipt-1.jpg", contentType: "image/jpeg" })
+      .attach("images", image, { filename: "receipt-2.jpg", contentType: "image/jpeg" });
+
+    expect(created.status).toBe(201);
+    expect(created.body.receipt.items.length).toBeGreaterThan(0);
+    await prisma.receipt.delete({ where: { id: created.body.receipt.id } });
+  });
 });

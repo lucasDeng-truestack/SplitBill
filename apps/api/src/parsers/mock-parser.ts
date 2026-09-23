@@ -1,5 +1,5 @@
 import type { ParsedReceipt } from "@splitbill/shared";
-import type { ReceiptImage, ReceiptParser } from "./types.js";
+import type { ReceiptParseInput, ReceiptParser } from "./types.js";
 
 export const MOCK_RECEIPT: ParsedReceipt = {
   items: [
@@ -15,7 +15,7 @@ export const MOCK_RECEIPT: ParsedReceipt = {
 export class MockReceiptParser implements ReceiptParser {
   readonly provider = "mock";
 
-  async parseReceipt(_input: ReceiptImage): Promise<ParsedReceipt> {
+  async parseReceipt(_input: ReceiptParseInput): Promise<ParsedReceipt> {
     return structuredClone(MOCK_RECEIPT);
   }
 }

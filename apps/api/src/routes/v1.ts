@@ -30,6 +30,8 @@ function param(req: { params: Record<string, string | string[] | undefined> }, n
   return value;
 }
 
+const MAX_RECEIPT_PHOTOS = 4;
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
@@ -41,6 +43,28 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+const receiptUpload = upload.fields([
+  { name: "image", maxCount: 1 },
+  { name: "images", maxCount: MAX_RECEIPT_PHOTOS },
+]);
+
+function uploadedImages(req: {
+  file?: Express.Multer.File;
+  files?: Express.Multer.File[] | Record<string, Express.Multer.File[]>;
+}): Express.Multer.File[] {
+  if (req.file) return [req.file];
+  const raw = req.files;
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.slice(0, MAX_RECEIPT_PHOTOS);
+  const combined = [...(raw.image ?? []), ...(raw.images ?? [])];
+  const seen = new Set<Express.Multer.File>();
+  return combined.filter((file) => {
+    if (seen.has(file)) return false;
+    seen.add(file);
+    return true;
+  }).slice(0, MAX_RECEIPT_PHOTOS);
+}
 
 function queryValue(req: { query: Record<string, unknown> }, name: string): string | undefined {
   const value = req.query[name];
@@ -82,16 +106,17 @@ v1Router.delete("/receipts", async (req, res, next) => {
   }
 });
 
-v1Router.post("/receipts", uploadLimiter, upload.single("image"), async (req, res, next) => {
+v1Router.post("/receipts", uploadLimiter, receiptUpload, async (req, res, next) => {
   try {
     if (req.body?.manual === "true" || req.body?.manual === true) {
       res.status(201).json({ receipt: await receiptService.createManualReceipt() });
       return;
     }
-    if (!req.file) {
+    const files = uploadedImages(req);
+    if (files.length === 0) {
       throw new AppError("VALIDATION_ERROR", "image file is required unless creating a manual receipt", 400);
     }
-    res.status(201).json({ receipt: await receiptService.createReceiptFromImage(req.file) });
+    res.status(201).json({ receipt: await receiptService.createReceiptFromImages(files) });
   } catch (error) {
     next(error);
   }

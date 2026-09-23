@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 
 type Mode = "idle" | "starting" | "live" | "preview";
 
+const MAX_PHOTOS = 4;
+
 const VIDEO_CONSTRAINTS: MediaStreamConstraints[] = [
   { audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
   { audio: false, video: { facingMode: { ideal: "environment" } } },
@@ -54,15 +56,15 @@ export function ReceiptCamera({
   onCapture,
 }: {
   busy: boolean;
-  onCapture: (file: File) => void;
+  onCapture: (files: File[]) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const previewUrlRef = useRef<string | null>(null);
+  const previewUrlsRef = useRef<string[]>([]);
   const [mode, setMode] = useState<Mode>("idle");
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [shot, setShot] = useState<File | null>(null);
+  const [shots, setShots] = useState<File[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [videoReady, setVideoReady] = useState(false);
 
@@ -73,10 +75,14 @@ export function ReceiptCamera({
     setVideoReady(false);
   }
 
+  function revokeUrls(urls: string[]) {
+    urls.forEach((url) => URL.revokeObjectURL(url));
+  }
+
   useEffect(() => {
     return () => {
       stopStream();
-      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      revokeUrls(previewUrlsRef.current);
     };
   }, []);
 
@@ -92,13 +98,19 @@ export function ReceiptCamera({
     }
   }, [mode]);
 
-  function showPreview(file: File) {
+  function addShots(files: File[]) {
+    const room = MAX_PHOTOS - shots.length;
+    const nextFiles = files.slice(0, room);
+    if (nextFiles.length === 0) {
+      setCameraError(`That’s ${MAX_PHOTOS} photos — enough for a long slip.`);
+      return;
+    }
     stopStream();
-    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-    const url = URL.createObjectURL(file);
-    previewUrlRef.current = url;
-    setShot(file);
-    setPreviewUrl(url);
+    const urls = nextFiles.map((file) => URL.createObjectURL(file));
+    const nextUrls = [...previewUrls, ...urls];
+    previewUrlsRef.current = nextUrls;
+    setShots((current) => [...current, ...nextFiles]);
+    setPreviewUrls(nextUrls);
     setMode("preview");
   }
 
@@ -116,7 +128,7 @@ export function ReceiptCamera({
       setMode("live");
     } catch {
       stopStream();
-      setMode("idle");
+      setMode(shots.length > 0 ? "preview" : "idle");
       setCameraError("This browser blocked the live camera. Use the phone’s camera app instead.");
     }
   }
@@ -128,26 +140,40 @@ export function ReceiptCamera({
       return;
     }
     try {
-      showPreview(await captureFromVideo(video));
+      addShots([await captureFromVideo(video)]);
     } catch {
       setCameraError("Couldn’t grab that frame. Try again.");
     }
   }
 
-  function onPicked(file: File | undefined) {
-    if (!file) return;
+  function onPicked(list: FileList | null) {
+    if (!list?.length) return;
     setCameraError(null);
-    showPreview(file);
+    addShots(Array.from(list));
   }
 
-  function retake() {
-    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-    previewUrlRef.current = null;
-    setPreviewUrl(null);
-    setShot(null);
-    setMode("idle");
+  function removeLast() {
+    const lastUrl = previewUrls[previewUrls.length - 1];
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
+    const nextUrls = previewUrls.slice(0, -1);
+    const nextShots = shots.slice(0, -1);
+    previewUrlsRef.current = nextUrls;
+    setPreviewUrls(nextUrls);
+    setShots(nextShots);
+    if (nextShots.length === 0) {
+      setMode("idle");
+      return;
+    }
+    setMode("preview");
+  }
+
+  function retakeLast() {
+    removeLast();
     void openLiveCamera();
   }
+
+  const canAddMore = shots.length < MAX_PHOTOS;
+  const showChooser = mode === "idle" || mode === "starting";
 
   return (
     <div className="relative mt-6">
@@ -155,16 +181,16 @@ export function ReceiptCamera({
         ref={fileRef}
         type="file"
         accept="image/*"
-        capture="environment"
+        multiple
         className="sr-only"
         disabled={busy}
         onChange={(event) => {
-          onPicked(event.target.files?.[0]);
+          onPicked(event.target.files);
           event.target.value = "";
         }}
       />
 
-      {mode === "idle" || mode === "starting" ? (
+      {showChooser ? (
         <div className="flex flex-col gap-2">
           <button
             type="button"
@@ -190,10 +216,11 @@ export function ReceiptCamera({
               type="file"
               accept="image/*"
               capture="environment"
+              multiple
               className="sr-only"
               disabled={busy}
               onChange={(event) => {
-                onPicked(event.target.files?.[0]);
+                onPicked(event.target.files);
                 event.target.value = "";
               }}
             />
@@ -221,6 +248,9 @@ export function ReceiptCamera({
             {!videoReady ? (
               <p className="absolute inset-x-4 -top-10 text-center text-[13px] text-docket">Point at the slip…</p>
             ) : null}
+            <p className="text-center font-mono text-[11px] text-mute">
+              {shots.length === 0 ? "Photo 1" : `Photo ${shots.length + 1} of the same slip`}
+            </p>
             <Button type="button" disabled={busy || !videoReady} onClick={() => void snap()}>
               Snap
             </Button>
@@ -231,25 +261,69 @@ export function ReceiptCamera({
             >
               Pick a photo instead
             </button>
+            {shots.length > 0 ? (
+              <button
+                type="button"
+                className="min-h-11 bg-transparent font-sans text-[13px] text-mute underline"
+                onClick={() => {
+                  stopStream();
+                  setMode("preview");
+                }}
+              >
+                Back to the photos I have
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
 
-      {mode === "preview" && previewUrl && shot ? (
+      {mode === "preview" && shots.length > 0 ? (
         <div className="overflow-hidden rounded-[14px] border border-perf bg-inset">
+          {previewUrls.length > 1 ? (
+            <div className="flex gap-2 overflow-x-auto border-b border-dashed border-rule px-3 py-3">
+              {previewUrls.map((url, index) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={url}
+                  src={url}
+                  alt={`Receipt photo ${index + 1}`}
+                  className="h-[72px] w-[52px] shrink-0 rounded-md border border-perf object-cover"
+                />
+              ))}
+            </div>
+          ) : null}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={previewUrl} alt="The receipt you just photographed" className="max-h-[min(70vh,440px)] w-full object-contain" />
+          <img
+            src={previewUrls[previewUrls.length - 1]}
+            alt="The receipt you just photographed"
+            className="max-h-[min(70vh,440px)] w-full object-contain"
+          />
           <div className="flex flex-col gap-2 bg-docket px-4 py-4">
-            <Button type="button" disabled={busy} onClick={() => onCapture(shot)}>
-              {busy ? "Reading the slip…" : "Looks good — read it"}
+            <p className="text-center text-[13px] leading-snug text-mute">
+              {shots.length === 1
+                ? "Long slip? Add a photo of the rest before we read it."
+                : `${shots.length} photos of this slip. We’ll read them as one bill.`}
+            </p>
+            <Button type="button" disabled={busy} onClick={() => onCapture(shots)}>
+              {busy ? "Reading the slip…" : shots.length > 1 ? "Looks good — read these" : "Looks good — read it"}
             </Button>
+            {canAddMore ? (
+              <Button
+                type="button"
+                variant="quiet"
+                disabled={busy}
+                onClick={() => void openLiveCamera()}
+              >
+                Add the rest of the slip
+              </Button>
+            ) : null}
             <button
               type="button"
               disabled={busy}
               className="min-h-11 bg-transparent font-sans text-[13px] text-mute underline"
-              onClick={retake}
+              onClick={retakeLast}
             >
-              Retake
+              Retake last photo
             </button>
           </div>
         </div>

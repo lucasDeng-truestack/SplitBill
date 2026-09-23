@@ -17,13 +17,13 @@ export default function NewBillPage() {
     window.location.href = `/bills/${receiptId}/review`;
   }
 
-  async function onFile(file: File | undefined) {
-    if (!file) return;
+  async function onFiles(files: File[]) {
+    if (files.length === 0) return;
     setBusy(true);
     setError(null);
     try {
-      const compressed = await compressImage(file);
-      const { receipt } = await api.createFromImage(compressed);
+      const compressed = await Promise.all(files.map((file) => compressImage(file)));
+      const { receipt } = await api.createFromImages(compressed);
       await goToReview(receipt.id);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "We couldn’t read that photo.");
@@ -50,22 +50,23 @@ export default function NewBillPage() {
       </Link>
       <h1 className="mt-2.5 max-w-[18ch] text-[34px] leading-[1.08] font-semibold tracking-[-0.03em]">Photograph the bill</h1>
       <p className="mt-2 max-w-[32ch] text-base leading-snug text-mute">
-        Flatten it out, get all the lines in frame. You’ll see the photo before we read it.
+        Flatten it out. If the slip is long, photograph the top, then add the rest before we read it.
       </p>
 
-      <ReceiptCamera busy={busy} onCapture={(file) => void onFile(file)} />
+      <ReceiptCamera busy={busy} onCapture={(files) => void onFiles(files)} />
 
       <div className="mt-3.5 flex flex-col">
         <label className="relative mx-[-8px] flex min-h-12 cursor-pointer items-center justify-between rounded-[10px] px-2 text-[15px] text-ink hover:bg-inset">
-          Pick a photo I already took
+          Pick photos I already took
           <span className="text-mute">→</span>
           <input
             type="file"
             accept="image/*"
+            multiple
             className="absolute inset-0 cursor-pointer opacity-0"
             disabled={busy}
             onChange={(event) => {
-              void onFile(event.target.files?.[0]);
+              void onFiles(Array.from(event.target.files ?? []));
               event.target.value = "";
             }}
           />
@@ -86,7 +87,7 @@ export default function NewBillPage() {
         <div className="mt-[22px] rounded-[10px] bg-inset p-3.5">
           <p className="text-sm font-semibold leading-snug text-alert">We couldn’t read that photo.</p>
           <p className="mt-1 text-sm leading-snug text-ink">
-            {error} Try again with the whole slip in frame, or type the items in — it’s a few lines.
+            {error} Try again with the whole slip in frame — two photos if it’s long — or type the items in.
           </p>
           <div className="mt-3 flex gap-2">
             <Button type="button" variant="secondary" className="w-auto min-h-11 px-4 text-sm" onClick={() => setError(null)}>

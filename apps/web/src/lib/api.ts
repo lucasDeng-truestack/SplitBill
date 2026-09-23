@@ -60,7 +60,14 @@ export const api = {
   getReceipt: (id: string) => request<{ receipt: ReceiptDto }>(`/receipts/${id}`),
   createFromImage: (file: File) => {
     const body = new FormData();
-    body.append("image", file);
+    body.append("images", file, file.name || "receipt.jpg");
+    return request<{ receipt: ReceiptDto }>("/receipts", { method: "POST", body });
+  },
+  createFromImages: (files: File[]) => {
+    const body = new FormData();
+    files.forEach((file, index) => {
+      body.append("images", file, file.name || `receipt-${index + 1}.jpg`);
+    });
     return request<{ receipt: ReceiptDto }>("/receipts", { method: "POST", body });
   },
   createManual: () => {

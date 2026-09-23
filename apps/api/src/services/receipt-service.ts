@@ -9,7 +9,7 @@ import type { ReceiptStatus } from "@prisma/client";
 import { InvalidStatusError, NotFoundError, ParseFailedError } from "../errors.js";
 import { logger } from "../logger.js";
 import { prisma } from "../prisma.js";
-import { validateParsedReceipt } from "../domain/validate-receipt.js";
+import { validateParsedReceipt, reconcileParsedReceipt } from "../domain/validate-receipt.js";
 import { createReceiptParser } from "../parsers/factory.js";
 import { toReceiptDto, toReceiptListItemDto } from "../mappers/receipt-mapper.js";
 import { createObjectStorage, receiptObjectKey } from "../storage/index.js";
@@ -53,10 +53,7 @@ export async function deleteReceipts(range: ReceiptListRange = "all") {
   const deleted = await prisma.receipt.deleteMany({ where });
   const storage = createObjectStorage();
   await Promise.all(
-    doomed.map(async (row) => {
-      if (!row.imagePath) return;
-      await storage.delete(row.imagePath);
-    }),
+    doomed.flatMap((row) => storedImageKeys(row.imagePath).map((key) => storage.delete(key))),
   );
   logger.info({ range, deleted: deleted.count }, "receipts cleared");
   return { deleted: deleted.count };
@@ -80,37 +77,59 @@ export async function createManualReceipt() {
   return toReceiptDto(receipt);
 }
 
-export async function createReceiptFromImage(file: { buffer: Buffer; mimetype: string; originalname: string }) {
+export type UploadedReceiptImage = { buffer: Buffer; mimetype: string; originalname: string };
+
+export async function createReceiptFromImage(file: UploadedReceiptImage) {
+  return createReceiptFromImages([file]);
+}
+
+export async function createReceiptFromImages(files: UploadedReceiptImage[]) {
+  if (files.length === 0) {
+    throw new ParseFailedError("Receipt photo is required");
+  }
+
   logger.info(
-    { mimeType: file.mimetype, size: file.buffer.length, filename: file.originalname },
+    {
+      photoCount: files.length,
+      files: files.map((file) => ({ mimeType: file.mimetype, size: file.buffer.length, filename: file.originalname })),
+    },
     "receipt upload received",
   );
 
-  const imagePath = receiptObjectKey(file.originalname);
-  await createObjectStorage().put({
-    key: imagePath,
-    bytes: file.buffer,
-    mimeType: file.mimetype,
-  });
+  const storage = createObjectStorage();
+  const imagePaths = await Promise.all(
+    files.map(async (file) => {
+      const imagePath = receiptObjectKey(file.originalname);
+      await storage.put({
+        key: imagePath,
+        bytes: file.buffer,
+        mimeType: file.mimetype,
+      });
+      return imagePath;
+    }),
+  );
+  const imagePath = imagePaths.join("\n") || null;
 
   const parser = createReceiptParser();
   let parsed;
   try {
-    parsed = await parser.parseReceipt({
-      bytes: file.buffer,
-      mimeType: file.mimetype,
-      filename: file.originalname,
-    });
+    parsed = await parser.parseReceipt(
+      files.map((file) => ({
+        bytes: file.buffer,
+        mimeType: file.mimetype,
+        filename: file.originalname,
+      })),
+    );
   } catch (error) {
-    await createObjectStorage().delete(imagePath);
+    await Promise.all(imagePaths.map((key) => storage.delete(key)));
     logger.error({ err: error }, "receipt parsing failed before persistence");
     throw error instanceof ParseFailedError
       ? error
       : new ParseFailedError("Receipt parsing failed");
   }
 
-  const { receipt: valid, issues } = validateParsedReceipt(parsed);
-  logger.info({ provider: parser.provider, issueCount: issues.length }, "receipt validation completed");
+  const { receipt: valid, issues } = validateParsedReceipt(reconcileParsedReceipt(parsed));
+  logger.info({ provider: parser.provider, issueCount: issues.length, photoCount: files.length }, "receipt validation completed");
 
   const receipt = await prisma.receipt.create({
     data: {
@@ -232,4 +251,9 @@ export async function deleteItem(receiptId: string, itemId: string) {
     prisma.itemAssignment.deleteMany({ where: { itemId } }),
     prisma.receiptItem.delete({ where: { id: itemId } }),
   ]);
+}
+
+function storedImageKeys(imagePath: string | null): string[] {
+  if (!imagePath) return [];
+  return imagePath.split("\n").map((key) => key.trim()).filter(Boolean);
 }
