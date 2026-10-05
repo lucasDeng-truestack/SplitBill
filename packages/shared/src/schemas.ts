@@ -59,7 +59,17 @@ export const patchReceiptBodySchema = z.object({
   taxCents: optionalCentsSchema,
   roundingCents: optionalCentsSchema,
   totalCents: optionalCentsSchema,
-  items: z.array(createItemBodySchema).optional(),
+  // Lines with an id update that item in place so claims on it survive a re-save.
+  items: z
+    .array(createItemBodySchema.extend({ id: z.string().uuid().optional() }))
+    .refine(
+      (items) => {
+        const ids = items.flatMap((item) => (item.id ? [item.id] : []));
+        return new Set(ids).size === ids.length;
+      },
+      { message: "Each line can appear only once" },
+    )
+    .optional(),
 });
 
 export const paymentMethodSchema = z.enum(["CASH", "QR"]);
@@ -106,6 +116,8 @@ export const personDtoSchema = z.object({
   name: z.string(),
   sortOrder: z.number().int(),
   paymentMethod: paymentMethodSchema.nullable(),
+  /** What they handed over when last marked paid; null if unpaid or paid before amounts were recorded. */
+  paidCents: z.number().int().nullable(),
 });
 
 export const assignmentDtoSchema = z.object({
@@ -169,6 +181,9 @@ export const personSummaryDtoSchema = z.object({
   discountCents: z.number().int(),
   roundingCents: z.number().int(),
   amountOwedCents: z.number().int(),
+  paidCents: z.number().int().nullable(),
+  /** amountOwed − paid for someone already paid: > 0 collect more, < 0 give back, 0 settled or unpaid. */
+  balanceCents: z.number().int(),
 });
 
 export const unassignedItemDtoSchema = z.object({
@@ -192,6 +207,10 @@ export const billSummaryDtoSchema = z.object({
   cashTotalCents: z.number().int(),
   qrTotalCents: z.number().int(),
   unpaidTotalCents: z.number().int(),
+  /** Sum of positive balances: more to collect from people already paid. */
+  balanceDueCents: z.number().int(),
+  /** Sum of negative balances as a positive number: change to give back. */
+  balanceRefundCents: z.number().int(),
   receiptTotalCents: z.number().int().nullable(),
   hasUnassigned: z.boolean(),
 });

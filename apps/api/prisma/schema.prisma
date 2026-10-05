@@ -63,6 +63,8 @@ model Person {
   name           String
   sortOrder      Int              @default(0)
   paymentMethod  PaymentMethod?
+  paidCashCents  Int?
+  paidQrCents    Int?
   assignments    ItemAssignment[]
 
   @@index([receiptId])

@@ -73,6 +73,8 @@ export default function CollectPage() {
   );
 
   const owedCents = personSummary?.amountOwedCents ?? 0;
+  const balanceCents = personSummary?.balanceCents ?? 0;
+  const canCollect = owedCents > 0 || balanceCents !== 0;
 
   async function addClaim() {
     if (!person || !selected) return;
@@ -90,6 +92,19 @@ export default function CollectPage() {
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not assign that item.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function undoClaim(assignmentId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteAssignment(id, assignmentId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not undo that item.");
     } finally {
       setBusy(false);
     }
@@ -155,7 +170,7 @@ export default function CollectPage() {
   }
 
   async function collectWith(method: PaymentMethod) {
-    if (!person || owedCents <= 0) return;
+    if (!person || !canCollect) return;
     const firstPayment = person.paymentMethod == null;
     setBusy(true);
     setError(null);
@@ -182,6 +197,7 @@ export default function CollectPage() {
   const remainingUnclaimed = receipt.items.some((item) => item.remainingQuantity > 0);
   const collectedCount = receipt.people.length;
   const unpaidCount = receipt.people.filter((seat) => seat.paymentMethod == null).length;
+  const unsettledIds = new Set(summary?.people.filter((row) => row.balanceCents !== 0).map((row) => row.personId));
   const pocketCash = summary?.cashTotalCents ?? 0;
   const pocketQr = summary?.qrTotalCents ?? 0;
 
@@ -197,7 +213,9 @@ export default function CollectPage() {
               <p className="mt-2.5 text-center text-[13px] text-mute">
                 {unpaidCount > 0
                   ? `${unpaidCount === 1 ? "1 person" : `${unpaidCount} people`} still unpaid — tap a face to go back.`
-                  : remainingUnclaimed
+                  : unsettledIds.size > 0
+                    ? `${unsettledIds.size === 1 ? "1 person’s" : `${unsettledIds.size} people’s`} order changed after they paid — tap a face to settle up.`
+                    : remainingUnclaimed
                     ? "Something is still unclaimed — you can sort it out before you pay."
                     : "You’ve got everyone’s money. Go settle the bill."}
               </p>
@@ -211,7 +229,7 @@ export default function CollectPage() {
             <p className="m-0 font-mono text-xs text-amber">
               {collectedCount === 1 ? "1 person so far" : `${collectedCount} people so far`}
             </p>
-            <SeatChips people={receipt.people} currentId={null} onOpen={openPerson} />
+            <SeatChips people={receipt.people} currentId={null} unsettledIds={unsettledIds} onOpen={openPerson} />
           </div>
         ) : null}
         <h1 className="mt-2.5 text-[34px] leading-[1.08] font-semibold tracking-[-0.03em]">
@@ -239,6 +257,13 @@ export default function CollectPage() {
             I’m with them
           </Button>
         </form>
+        <EveryoneSoFar
+          people={receipt.people}
+          summaries={summary?.people ?? []}
+          currentId={null}
+          currency={receipt.currency}
+          onOpen={openPerson}
+        />
         <PocketLine cash={pocketCash} qr={pocketQr} currency={receipt.currency} />
         {error ? <p className="mt-4 text-sm text-alert">{error}</p> : null}
       </Docket>
@@ -247,21 +272,34 @@ export default function CollectPage() {
 
   const paidLabel =
     person.paymentMethod === "CASH" ? "Paid by cash" : person.paymentMethod === "QR" ? "Paid by QR" : null;
+  const paidCents = personSummary?.paidCents ?? null;
 
   return (
     <Docket
       footer={
         <div>
           <div className="mb-3 flex items-baseline justify-between">
-            <span className="text-sm text-mute">{paidLabel ?? `Collect from ${firstName(person.name)}`}</span>
+            <span className={cn("text-sm", balanceCents !== 0 ? "font-semibold text-alert" : "text-mute")}>
+              {balanceCents > 0
+                ? `Collect ${formatMoney(balanceCents, receipt.currency)} more`
+                : balanceCents < 0
+                  ? `Give back ${formatMoney(-balanceCents, receipt.currency)}`
+                  : (paidLabel ?? `Collect from ${firstName(person.name)}`)}
+            </span>
             <Money cents={owedCents} currency={receipt.currency} className="text-[22px] text-amber" />
           </div>
+          {balanceCents !== 0 && paidCents != null ? (
+            <p className="-mt-1.5 mb-3 text-[13px] leading-snug text-mute">
+              They paid {formatMoney(paidCents, receipt.currency)}, but their order changed.{" "}
+              {balanceCents > 0 ? "Take the rest" : "Give the change back"}, then tap how — Cash or QR.
+            </p>
+          ) : null}
           <div className="flex gap-2">
             <Button
               type="button"
               variant={person.paymentMethod === "CASH" ? "primary" : "secondary"}
               className="flex-1"
-              disabled={busy || owedCents <= 0}
+              disabled={busy || !canCollect}
               onClick={() => void collectWith("CASH")}
             >
               Cash
@@ -270,7 +308,7 @@ export default function CollectPage() {
               type="button"
               variant={person.paymentMethod === "QR" ? "primary" : "secondary"}
               className="flex-1"
-              disabled={busy || owedCents <= 0}
+              disabled={busy || !canCollect}
               onClick={() => void collectWith("QR")}
             >
               QR
@@ -307,7 +345,7 @@ export default function CollectPage() {
         <p className="m-0 font-mono text-xs text-amber">
           {collectedCount === 1 ? "1st person" : `Person ${receipt.people.findIndex((seat) => seat.id === person.id) + 1}`}
         </p>
-        <SeatChips people={receipt.people} currentId={person.id} onOpen={openPerson} />
+        <SeatChips people={receipt.people} currentId={person.id} unsettledIds={unsettledIds} onOpen={openPerson} />
       </div>
 
       <h1 className="mt-2.5 text-[46px] leading-[1.02] font-semibold tracking-[-0.035em]">{person.name}</h1>
@@ -403,11 +441,9 @@ export default function CollectPage() {
                 <Money cents={item.unitPriceCents * assignment.quantity} currency={receipt.currency} className="text-sm" />
                 <button
                   type="button"
+                  disabled={busy}
                   className="bg-transparent p-0.5 font-sans text-xs text-mute underline"
-                  onClick={async () => {
-                    await api.deleteAssignment(id, assignment.id);
-                    await refresh();
-                  }}
+                  onClick={() => void undoClaim(assignment.id)}
                 >
                   undo
                 </button>
@@ -420,6 +456,13 @@ export default function CollectPage() {
         <p className="mt-3.5 text-sm text-mute">Nothing added yet — tap a line above, then take the money.</p>
       )}
 
+      <EveryoneSoFar
+        people={receipt.people}
+        summaries={summary?.people ?? []}
+        currentId={person.id}
+        currency={receipt.currency}
+        onOpen={openPerson}
+      />
       <PocketLine cash={pocketCash} qr={pocketQr} currency={receipt.currency} />
       {error ? <p className="mt-4 text-sm text-alert">{error}</p> : null}
     </Docket>
@@ -449,19 +492,21 @@ function ChargeLines({ person, currency }: { person: PersonSummaryDto; currency:
   );
 }
 
-function seatVariant(seat: PersonDto, currentId: string | null) {
+function seatVariant(seat: PersonDto, currentId: string | null, unsettled: boolean) {
   if (seat.id === currentId) return "live" as const;
-  if (seat.paymentMethod) return "done" as const;
+  if (seat.paymentMethod && !unsettled) return "done" as const;
   return "waiting" as const;
 }
 
 function SeatChips({
   people,
   currentId,
+  unsettledIds,
   onOpen,
 }: {
   people: PersonDto[];
   currentId: string | null;
+  unsettledIds: Set<string>;
   onOpen: (id: string) => void;
 }) {
   return (
@@ -472,7 +517,9 @@ function SeatChips({
           type="button"
           className="bg-transparent p-0"
           aria-label={
-            seat.paymentMethod === "CASH"
+            unsettledIds.has(seat.id)
+              ? `${seat.name}, order changed after paying — tap to settle up`
+              : seat.paymentMethod === "CASH"
               ? `${seat.name}, paid by cash`
               : seat.paymentMethod === "QR"
                 ? `${seat.name}, paid by QR`
@@ -480,9 +527,100 @@ function SeatChips({
           }
           onClick={() => onOpen(seat.id)}
         >
-          <PersonChip name={seat.name} size="md" variant={seatVariant(seat, currentId)} />
+          <PersonChip name={seat.name} size="md" variant={seatVariant(seat, currentId, unsettledIds.has(seat.id))} />
         </button>
       ))}
+    </div>
+  );
+}
+
+function EveryoneSoFar({
+  people,
+  summaries,
+  currentId,
+  currency,
+  onOpen,
+}: {
+  people: PersonDto[];
+  summaries: PersonSummaryDto[];
+  currentId: string | null;
+  currency: string;
+  onOpen: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const others = people.filter((seat) => seat.id !== currentId);
+  if (others.length === 0) return null;
+
+  return (
+    <div className="mt-5 border-t border-dashed border-perf pt-3">
+      <button
+        type="button"
+        aria-expanded={open}
+        className="flex min-h-11 w-full items-center justify-between bg-transparent p-0 text-left font-sans"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="font-mono text-[11px] text-mute">
+          {currentId ? "Everyone else so far" : "Everyone so far"} · {others.length}
+        </span>
+        <span className="text-[13px] text-mute underline">{open ? "Hide" : "Check their orders"}</span>
+      </button>
+      {open ? (
+        <div className="mt-1 flex flex-col gap-2">
+          {others.map((seat) => {
+            const row = summaries.find((summary) => summary.personId === seat.id);
+            const items = row?.items ?? [];
+            const balance = row?.balanceCents ?? 0;
+            const paid =
+              seat.paymentMethod === "CASH" ? "Paid by cash" : seat.paymentMethod === "QR" ? "Paid by QR" : "Not paid yet";
+            const status =
+              balance > 0
+                ? `${paid} · collect ${formatMoney(balance, currency)} more`
+                : balance < 0
+                  ? `${paid} · give back ${formatMoney(-balance, currency)}`
+                  : paid;
+            return (
+              <div key={seat.id} className="rounded-[10px] bg-inset p-3.5">
+                <div className="flex items-center gap-2.5">
+                  <PersonChip name={seat.name} size="sm" variant={seat.paymentMethod && balance === 0 ? "done" : "waiting"} />
+                  <span className="text-[15px] font-medium">{seat.name}</span>
+                  <span className="leader" />
+                  <Money cents={row?.amountOwedCents ?? 0} currency={currency} className="text-[15px]" />
+                </div>
+                <p
+                  className={cn(
+                    "mt-1 font-mono text-[11px]",
+                    balance !== 0 ? "text-alert" : seat.paymentMethod ? "text-pandan" : "text-amber",
+                  )}
+                >
+                  {status}
+                </p>
+                {items.length > 0 ? (
+                  <div className="mt-2 flex flex-col gap-1">
+                    {items.map((item) => (
+                      <div key={item.itemId} className="flex items-baseline gap-2 text-sm">
+                        <span>
+                          {item.name} ×{item.quantity}
+                        </span>
+                        <span className="leader" />
+                        <Money cents={item.lineTotalCents} currency={currency} className="text-sm text-mute" />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-mute">Nothing added yet.</p>
+                )}
+                <button
+                  type="button"
+                  className="mt-2 min-h-11 bg-transparent p-0 font-sans text-[13px] text-mute underline"
+                  onClick={() => onOpen(seat.id)}
+                >
+                  Go to {firstName(seat.name)}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

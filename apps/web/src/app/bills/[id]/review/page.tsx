@@ -102,7 +102,6 @@ export default function ReviewPage() {
     setError(null);
     try {
       await api.updateReceipt(id, {
-        status: "REVIEW",
         subtotalCents: subtotal ? majorToCents(subtotal) : null,
         serviceChargeCents: serviceCharge ? majorToCents(serviceCharge) : null,
         taxCents: tax ? majorToCents(tax) : null,
@@ -112,6 +111,7 @@ export default function ReviewPage() {
         items: items
           .filter((item) => item.name.trim())
           .map((item) => ({
+            id: item.id,
             name: item.name.trim(),
             quantity: Number(item.quantity),
             unitPriceCents: majorToCents(item.unitPrice || "0"),

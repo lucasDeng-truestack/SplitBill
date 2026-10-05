@@ -176,21 +176,66 @@ export async function updateReceipt(id: string, body: PatchReceiptBody) {
     throw new InvalidStatusError("Add at least one item before collecting");
   }
 
+  const existingItems = new Map(existing.items.map((item) => [item.id, item]));
+  const keptIds = new Set(
+    (body.items ?? []).flatMap((item) => (item.id && existingItems.has(item.id) ? [item.id] : [])),
+  );
+  if (body.items) {
+    for (const item of body.items) {
+      const current = item.id ? existingItems.get(item.id) : undefined;
+      if (!current) continue;
+      if (item.quantity < current.assignedQuantity) {
+        throw new InvalidStatusError(
+          `${current.name} already has ${current.assignedQuantity} claimed. Undo a claim before lowering it.`,
+        );
+      }
+      if (item.unitPriceCents !== current.unitPriceCents && hasPaidClaim(existing, current.id)) {
+        throw new InvalidStatusError(
+          `Someone already paid for ${current.name}. Undo their claim before changing its price.`,
+        );
+      }
+    }
+    const claimedAndRemoved = existing.items.find((item) => !keptIds.has(item.id) && item.assignedQuantity > 0);
+    if (claimedAndRemoved) {
+      throw new InvalidStatusError(
+        `${claimedAndRemoved.name} is already claimed. Undo the claim before removing it.`,
+      );
+    }
+  }
+
   const receipt = await prisma.$transaction(async (tx) => {
     if (body.items) {
-      await tx.itemAssignment.deleteMany({ where: { receiptId: id } });
-      await tx.receiptItem.deleteMany({ where: { receiptId: id } });
-      await tx.receiptItem.createMany({
-        data: body.items.map((item, index) => ({
-          receiptId: id,
+      const removedIds = existing.items.filter((item) => !keptIds.has(item.id)).map((item) => item.id);
+      // Conditional writes: a claim that lands after the checks above makes the save fail
+      // instead of being dropped or pushing assignedQuantity past quantity.
+      if (removedIds.length > 0) {
+        const removed = await tx.receiptItem.deleteMany({
+          where: { id: { in: removedIds }, assignedQuantity: 0 },
+        });
+        if (removed.count !== removedIds.length) {
+          throw new InvalidStatusError("Someone just claimed a line you removed. Reload and try again.");
+        }
+      }
+      for (const [index, item] of body.items.entries()) {
+        const data = {
           name: item.name,
           quantity: item.quantity,
           unitPriceCents: item.unitPriceCents,
           totalPriceCents: item.totalPriceCents,
           sortOrder: index,
-          assignedQuantity: 0,
-        })),
-      });
+        };
+        if (item.id && keptIds.has(item.id)) {
+          const updated = await tx.receiptItem.updateMany({
+            where: { id: item.id, assignedQuantity: { lte: item.quantity } },
+            data,
+          });
+          if (updated.count !== 1) {
+            throw new InvalidStatusError(`Someone just claimed more ${item.name}. Reload and try again.`);
+          }
+        } else {
+          await tx.receiptItem.create({ data: { ...data, receiptId: id } });
+        }
+      }
     }
 
     return tx.receipt.update({
@@ -236,6 +281,9 @@ export async function updateItem(receiptId: string, itemId: string, body: Partia
   if (body.quantity != null && body.quantity < item.assignedQuantity) {
     throw new InvalidStatusError("Quantity cannot be less than already assigned quantity");
   }
+  if (body.unitPriceCents != null && body.unitPriceCents !== item.unitPriceCents && hasPaidClaim(receipt, itemId)) {
+    throw new InvalidStatusError(`Someone already paid for ${item.name}. Undo their claim before changing its price.`);
+  }
   return prisma.receiptItem.update({
     where: { id: itemId },
     data: body,
@@ -251,6 +299,14 @@ export async function deleteItem(receiptId: string, itemId: string) {
     prisma.itemAssignment.deleteMany({ where: { itemId } }),
     prisma.receiptItem.delete({ where: { id: itemId } }),
   ]);
+}
+
+function hasPaidClaim(
+  receipt: { people: Array<{ id: string; paymentMethod: unknown }>; assignments: Array<{ itemId: string; personId: string }> },
+  itemId: string,
+) {
+  const paidIds = new Set(receipt.people.filter((person) => person.paymentMethod).map((person) => person.id));
+  return receipt.assignments.some((assignment) => assignment.itemId === itemId && paidIds.has(assignment.personId));
 }
 
 function storedImageKeys(imagePath: string | null): string[] {

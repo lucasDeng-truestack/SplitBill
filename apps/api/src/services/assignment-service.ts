@@ -32,14 +32,14 @@ export async function claimAssignment(receiptId: string, body: CreateAssignmentB
 
   try {
     const assignment = await prisma.$transaction(async (tx) => {
-      const updated = await tx.receiptItem.updateMany({
-        where: {
-          id: body.itemId,
-          assignedQuantity: { lte: item.quantity - body.quantity },
-        },
-        data: { assignedQuantity: { increment: body.quantity } },
-      });
-      if (updated.count !== 1) {
+      // Compare against the row's quantity at write time, so a concurrent review save that
+      // lowers the quantity can't leave assignedQuantity above it.
+      const updated = await tx.$executeRaw`
+        UPDATE "ReceiptItem"
+        SET "assignedQuantity" = "assignedQuantity" + ${body.quantity}
+        WHERE "id" = ${body.itemId} AND "assignedQuantity" + ${body.quantity} <= "quantity"
+      `;
+      if (updated !== 1) {
         throw new OverAllocationError();
       }
 

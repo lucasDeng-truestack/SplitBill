@@ -116,6 +116,134 @@ describe("receipt API flow", () => {
     await prisma.receipt.delete({ where: { id: taxReceiptId } });
   });
 
+  it("keeps claims and payments when the slip is saved again from review", async () => {
+    const created = await request(app).post("/api/v1/receipts").field("manual", "true");
+    const reviewId = created.body.receipt.id as string;
+
+    const nasi = await request(app)
+      .post(`/api/v1/receipts/${reviewId}/items`)
+      .send({ name: "Nasi lemak", quantity: 2, unitPriceCents: 1000, totalPriceCents: 2000 });
+    const teh = await request(app)
+      .post(`/api/v1/receipts/${reviewId}/items`)
+      .send({ name: "Teh tarik", quantity: 1, unitPriceCents: 300, totalPriceCents: 300 });
+    const nasiId = nasi.body.item.id as string;
+    const tehId = teh.body.item.id as string;
+
+    const person = await request(app).post(`/api/v1/receipts/${reviewId}/people`).send({ name: "Aisha" });
+    const personId = person.body.person.id as string;
+    await request(app).post(`/api/v1/receipts/${reviewId}/assignments`).send({ personId, itemId: nasiId, quantity: 2 });
+    await request(app).patch(`/api/v1/receipts/${reviewId}/people/${personId}`).send({ paymentMethod: "QR" });
+
+    const saved = await request(app)
+      .patch(`/api/v1/receipts/${reviewId}`)
+      .send({
+        items: [
+          { id: nasiId, name: "Nasi lemak ayam", quantity: 3, unitPriceCents: 1000, totalPriceCents: 3000 },
+          { name: "Milo ais", quantity: 1, unitPriceCents: 400, totalPriceCents: 400 },
+        ],
+      });
+    expect(saved.status).toBe(200);
+    expect(saved.body.receipt.status).toBe("COLLECTING");
+    const items = saved.body.receipt.items as { id: string; name: string; assignedQuantity: number }[];
+    expect(items.map((item) => item.name)).toEqual(["Nasi lemak ayam", "Milo ais"]);
+    expect(items.find((item) => item.id === nasiId)?.assignedQuantity).toBe(2);
+    expect(items.some((item) => item.id === tehId)).toBe(false);
+    expect(saved.body.receipt.assignments).toHaveLength(1);
+
+    const summary = await request(app).get(`/api/v1/receipts/${reviewId}/summary`);
+    const seat = summary.body.summary.people.find((row: { personId: string }) => row.personId === personId);
+    expect(seat.amountOwedCents).toBe(2000);
+    expect(seat.paymentMethod).toBe("QR");
+
+    const shrunk = await request(app)
+      .patch(`/api/v1/receipts/${reviewId}`)
+      .send({ items: [{ id: nasiId, name: "Nasi lemak ayam", quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000 }] });
+    expect(shrunk.status).toBe(409);
+
+    const dropped = await request(app).patch(`/api/v1/receipts/${reviewId}`).send({ items: [] });
+    expect(dropped.status).toBe(409);
+    expect(dropped.body.error.code).toBe("INVALID_STATUS");
+
+    const repriced = await request(app)
+      .patch(`/api/v1/receipts/${reviewId}`)
+      .send({ items: [{ id: nasiId, name: "Nasi lemak ayam", quantity: 3, unitPriceCents: 1200, totalPriceCents: 3600 }] });
+    expect(repriced.status).toBe(409);
+
+    const duplicated = await request(app)
+      .patch(`/api/v1/receipts/${reviewId}`)
+      .send({
+        items: [
+          { id: nasiId, name: "Nasi lemak ayam", quantity: 3, unitPriceCents: 1000, totalPriceCents: 3000 },
+          { id: nasiId, name: "Nasi lemak ayam", quantity: 2, unitPriceCents: 1000, totalPriceCents: 2000 },
+        ],
+      });
+    expect(duplicated.status).toBe(400);
+
+    await prisma.receipt.delete({ where: { id: reviewId } });
+  });
+
+  it("records what someone paid and shows the difference when their share changes", async () => {
+    const created = await request(app).post("/api/v1/receipts").field("manual", "true");
+    const billId = created.body.receipt.id as string;
+    const nasi = await request(app)
+      .post(`/api/v1/receipts/${billId}/items`)
+      .send({ name: "Nasi lemak", quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000 });
+    const teh = await request(app)
+      .post(`/api/v1/receipts/${billId}/items`)
+      .send({ name: "Teh tarik", quantity: 1, unitPriceCents: 300, totalPriceCents: 300 });
+    const person = await request(app).post(`/api/v1/receipts/${billId}/people`).send({ name: "Aisha" });
+    const personId = person.body.person.id as string;
+    await request(app).post(`/api/v1/receipts/${billId}/assignments`).send({ personId, itemId: nasi.body.item.id, quantity: 1 });
+
+    const paid = await request(app).patch(`/api/v1/receipts/${billId}/people/${personId}`).send({ paymentMethod: "QR" });
+    expect(paid.body.person.paidCents).toBe(1000);
+
+    const extra = await request(app)
+      .post(`/api/v1/receipts/${billId}/assignments`)
+      .send({ personId, itemId: teh.body.item.id, quantity: 1 });
+    let summary = (await request(app).get(`/api/v1/receipts/${billId}/summary`)).body.summary;
+    let seat = summary.people[0];
+    expect(seat.amountOwedCents).toBe(1300);
+    expect(seat.paidCents).toBe(1000);
+    expect(seat.balanceCents).toBe(300);
+    expect(summary.balanceDueCents).toBe(300);
+    expect(summary.qrTotalCents).toBe(1000);
+
+    await request(app).patch(`/api/v1/receipts/${billId}/people/${personId}`).send({ paymentMethod: "QR" });
+    summary = (await request(app).get(`/api/v1/receipts/${billId}/summary`)).body.summary;
+    expect(summary.people[0].balanceCents).toBe(0);
+    expect(summary.qrTotalCents).toBe(1300);
+
+    await request(app).delete(`/api/v1/receipts/${billId}/assignments/${extra.body.assignment.id}`);
+    summary = (await request(app).get(`/api/v1/receipts/${billId}/summary`)).body.summary;
+    seat = summary.people[0];
+    expect(seat.balanceCents).toBe(-300);
+    expect(summary.balanceRefundCents).toBe(300);
+    expect(summary.balanceDueCents).toBe(0);
+
+    const repriced = await request(app)
+      .patch(`/api/v1/receipts/${billId}/items/${nasi.body.item.id}`)
+      .send({ unitPriceCents: 1200 });
+    expect(repriced.status).toBe(409);
+
+    const cleared = await request(app).patch(`/api/v1/receipts/${billId}/people/${personId}`).send({ paymentMethod: null });
+    expect(cleared.body.person.paidCents).toBeNull();
+    summary = (await request(app).get(`/api/v1/receipts/${billId}/summary`)).body.summary;
+    expect(summary.people[0].balanceCents).toBe(0);
+    expect(summary.unpaidTotalCents).toBe(1000);
+
+    // Settle a top-up with the other method: cash stays cash, only the difference is QR.
+    await request(app).patch(`/api/v1/receipts/${billId}/people/${personId}`).send({ paymentMethod: "CASH" });
+    await request(app).post(`/api/v1/receipts/${billId}/assignments`).send({ personId, itemId: teh.body.item.id, quantity: 1 });
+    await request(app).patch(`/api/v1/receipts/${billId}/people/${personId}`).send({ paymentMethod: "QR" });
+    summary = (await request(app).get(`/api/v1/receipts/${billId}/summary`)).body.summary;
+    expect(summary.cashTotalCents).toBe(1000);
+    expect(summary.qrTotalCents).toBe(300);
+    expect(summary.people[0].balanceCents).toBe(0);
+
+    await prisma.receipt.delete({ where: { id: billId } });
+  });
+
   it("lists receipts by day range and can clear them", async () => {
     const created = await request(app).post("/api/v1/receipts").field("manual", "true");
     expect(created.status).toBe(201);

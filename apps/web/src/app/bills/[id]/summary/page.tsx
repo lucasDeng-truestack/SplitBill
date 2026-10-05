@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { formatMoney } from "@splitbill/shared";
 import type { BillSummaryDto } from "@splitbill/shared";
 import { Docket } from "@/components/docket";
 import { Money } from "@/components/money";
@@ -99,11 +100,17 @@ export default function SummaryPage() {
     >
       <StepPath current="Summary" billId={id} />
       <h1 className="text-[34px] leading-[1.08] font-semibold tracking-[-0.03em]">Here’s what everyone owes you</h1>
-      <p className={cn("mt-2 text-[15px]", summary.hasUnassigned || summary.unpaidTotalCents > 0 ? "text-mute" : "text-pandan")}>
+      <p className={cn("mt-2 text-[15px]", summary.hasUnassigned ||
+            summary.unpaidTotalCents > 0 ||
+            summary.balanceDueCents > 0 ||
+            summary.balanceRefundCents > 0
+            ? "text-mute" : "text-pandan")}>
         {summary.hasUnassigned
           ? `${summary.people.length} people · something still on the table`
           : summary.unpaidTotalCents > 0
             ? "Some people still haven’t paid you."
+            : summary.balanceDueCents > 0 || summary.balanceRefundCents > 0
+              ? "Some orders changed after people paid — settle up first."
             : "You’ve collected. Now pay the counter."}
       </p>
 
@@ -121,8 +128,18 @@ export default function SummaryPage() {
               <span className="flex-1">
                 <span className="block text-[19px] font-semibold tracking-[-0.01em]">{person.name}</span>
                 {person.paymentMethod ? (
-                  <span className="mt-0.5 block font-mono text-[11px] text-amber">
+                  <span
+                    className={cn(
+                      "mt-0.5 block font-mono text-[11px]",
+                      person.balanceCents !== 0 ? "text-alert" : "text-amber",
+                    )}
+                  >
                     {person.paymentMethod === "CASH" ? "cash" : "QR"}
+                    {person.balanceCents > 0
+                      ? ` · collect ${formatMoney(person.balanceCents, summary.currency)} more`
+                      : person.balanceCents < 0
+                        ? ` · give back ${formatMoney(-person.balanceCents, summary.currency)}`
+                        : ""}
                   </span>
                 ) : (
                   <span className="mt-0.5 block font-mono text-[11px] text-mute">not paid yet</span>
@@ -193,6 +210,12 @@ export default function SummaryPage() {
         <Row label="QR in hand" cents={summary.qrTotalCents} currency={summary.currency} className="text-amber" />
         {summary.unpaidTotalCents > 0 ? (
           <Row label="Not paid yet" cents={summary.unpaidTotalCents} currency={summary.currency} className="text-alert" />
+        ) : null}
+        {summary.balanceDueCents > 0 ? (
+          <Row label="Still to collect" cents={summary.balanceDueCents} currency={summary.currency} className="text-alert" />
+        ) : null}
+        {summary.balanceRefundCents > 0 ? (
+          <Row label="To give back" cents={summary.balanceRefundCents} currency={summary.currency} className="text-alert" />
         ) : null}
         <Row label="Claimed" cents={summary.assignedTotalCents} currency={summary.currency} />
         <Row
