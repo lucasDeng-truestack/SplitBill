@@ -7,6 +7,7 @@ import type { BillSummaryDto, PaymentMethod, PersonDto, PersonSummaryDto, Receip
 import { Docket } from "@/components/docket";
 import { ItemFind } from "@/components/item-find";
 import { Money } from "@/components/money";
+import { PaymentFilterControl, PaymentFilterEmpty } from "@/components/payment-filter";
 import { PersonChip } from "@/components/person-chip";
 import { QuantityStepper } from "@/components/quantity-stepper";
 import { StepPath } from "@/components/step-path";
@@ -14,6 +15,13 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError, api } from "@/lib/api";
 import { filterItemsByQuery } from "@/lib/filter-items";
+import {
+  DEFAULT_PAYMENT_FILTER,
+  filterByPayment,
+  paymentFilterCounts,
+  type PaymentFilter,
+  type PaymentStanding,
+} from "@/lib/payment-filter";
 import { firstName } from "@/lib/people";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +37,11 @@ export default function CollectPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [find, setFind] = useState("");
+  const [filter, setFilter] = useState<PaymentFilter>(DEFAULT_PAYMENT_FILTER);
+  /** Which of Cash / QR is being saved right now, so that button can say so. */
+  const [saving, setSaving] = useState<PaymentMethod | null>(null);
+  /** The last payment tap, shown on "Who's next?" so the tap visibly landed. */
+  const [recorded, setRecorded] = useState<{ name: string; method: PaymentMethod; paidCents: number | null } | null>(null);
 
   const refresh = useCallback(async () => {
     const [{ receipt: data }, { summary: nextSummary }] = await Promise.all([
@@ -37,12 +50,12 @@ export default function CollectPage() {
     ]);
     setReceipt(data);
     setSummary(nextSummary);
-    return data;
+    return { receipt: data, summary: nextSummary };
   }, [id]);
 
   useEffect(() => {
     refresh()
-      .then((data) => {
+      .then(({ receipt: data }) => {
         if (data.people.length === 0) {
           setAdding(true);
           return;
@@ -82,7 +95,7 @@ export default function CollectPage() {
     setError(null);
     try {
       await api.claim(id, { personId: person.id, itemId: selected.id, quantity });
-      const updated = await refresh();
+      const { receipt: updated } = await refresh();
       const fresh = updated.items.find((item) => item.id === selected.id);
       if (!fresh || fresh.remainingQuantity <= 0) {
         setSelectedId(null);
@@ -116,10 +129,11 @@ export default function CollectPage() {
     setError(null);
     try {
       await api.addPerson(id, { name: name.trim() });
-      const updated = await refresh();
+      const { receipt: updated } = await refresh();
       const next = updated.people[updated.people.length - 1];
       setName("");
       setAdding(false);
+      setRecorded(null);
       setPersonId(next?.id ?? null);
       setSelectedId(null);
       setQuantity(1);
@@ -133,6 +147,7 @@ export default function CollectPage() {
   function openPerson(nextId: string) {
     setPersonId(nextId);
     setAdding(false);
+    setRecorded(null);
     setSelectedId(null);
     setQuantity(1);
     setFind("");
@@ -141,6 +156,7 @@ export default function CollectPage() {
 
   function comeBackLater() {
     setAdding(true);
+    setRecorded(null);
     setName("");
     setSelectedId(null);
     setQuantity(1);
@@ -154,7 +170,7 @@ export default function CollectPage() {
     setError(null);
     try {
       await api.deletePerson(id, person.id);
-      const updated = await refresh();
+      const { receipt: updated } = await refresh();
       setPersonId(null);
       setSelectedId(null);
       setQuantity(1);
@@ -171,17 +187,22 @@ export default function CollectPage() {
 
   async function collectWith(method: PaymentMethod) {
     if (!person || !canCollect) return;
-    const firstPayment = person.paymentMethod == null;
     setBusy(true);
+    setSaving(method);
     setError(null);
     try {
       await api.updatePerson(id, person.id, { paymentMethod: method });
-      await refresh();
-      if (firstPayment) comeBackLater();
+      const { summary: fresh } = await refresh();
+      const row = fresh.people.find((seat) => seat.personId === person.id);
+      // Every tap lands somewhere visible: back to "Who's next?" with a note of what was recorded.
+      // Staying put after a top-up or a cash/QR correction looked like the button had died.
+      comeBackLater();
+      setRecorded({ name: person.name, method: row?.paymentMethod ?? method, paidCents: row?.paidCents ?? null });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not record how they paid.");
     } finally {
       setBusy(false);
+      setSaving(null);
     }
   }
 
@@ -200,6 +221,23 @@ export default function CollectPage() {
   const unsettledIds = new Set(summary?.people.filter((row) => row.balanceCents !== 0).map((row) => row.personId));
   const pocketCash = summary?.cashTotalCents ?? 0;
   const pocketQr = summary?.qrTotalCents ?? 0;
+
+  const standingOf = (seat: PersonDto): PaymentStanding => ({
+    paymentMethod: seat.paymentMethod,
+    balanceCents: summary?.people.find((row) => row.personId === seat.id)?.balanceCents ?? 0,
+  });
+  const filterCounts = paymentFilterCounts(receipt.people, standingOf);
+  const filteredPeople = filterByPayment(receipt.people, standingOf, filter);
+  const showFilter = receipt.people.length > 1;
+  // The person on screen never disappears from the chips, whatever the filter says.
+  const chipPeople = (currentId: string | null) =>
+    receipt.people.filter((seat) => seat.id === currentId || filteredPeople.includes(seat));
+  const filteredLabel = filter === "paid" ? "Paid so far" : filter === "unpaid" ? "Still to collect" : "Everyone so far";
+  const recordedNote = recorded
+    ? `${firstName(recorded.name)} paid by ${recorded.method === "CASH" ? "cash" : "QR"}${
+        recorded.paidCents != null ? ` · ${formatMoney(recorded.paidCents, receipt.currency)}` : ""
+      } — recorded.`
+    : null;
 
   if (adding || !person) {
     return (
@@ -225,12 +263,18 @@ export default function CollectPage() {
       >
         <StepPath current="Collect" billId={id} />
         {collectedCount > 0 ? (
-          <div className="flex items-center justify-between gap-3">
-            <p className="m-0 font-mono text-xs text-amber">
-              {collectedCount === 1 ? "1 person so far" : `${collectedCount} people so far`}
-            </p>
-            <SeatChips people={receipt.people} currentId={null} unsettledIds={unsettledIds} onOpen={openPerson} />
-          </div>
+          <>
+            {showFilter ? <PaymentFilterControl value={filter} counts={filterCounts} onChange={setFilter} className="mb-3" /> : null}
+            <div className="flex items-center justify-between gap-3">
+              <p className="m-0 font-mono text-xs text-amber">
+                {collectedCount === 1 ? "1 person so far" : `${collectedCount} people so far`}
+              </p>
+              <SeatChips people={chipPeople(null)} currentId={null} unsettledIds={unsettledIds} onOpen={openPerson} />
+            </div>
+            {showFilter && filteredPeople.length === 0 ? (
+              <PaymentFilterEmpty filter={filter} onShowAll={() => setFilter("all")} />
+            ) : null}
+          </>
         ) : null}
         <h1 className="mt-2.5 text-[34px] leading-[1.08] font-semibold tracking-[-0.03em]">
           {collectedCount === 0 ? "Walk up to someone" : "Who’s next?"}
@@ -240,6 +284,11 @@ export default function CollectPage() {
             ? "Add their name, tap what they ordered, and take the money before you walk on."
             : "Add the next person, or tap a face to go back to someone you already started with."}
         </p>
+        {recordedNote ? (
+          <p role="status" className="mt-3 rounded-[10px] bg-inset px-3.5 py-2.5 text-sm text-pandan">
+            {recordedNote}
+          </p>
+        ) : null}
         <form
           className="mt-[22px] flex flex-col gap-2.5"
           onSubmit={(event) => {
@@ -258,9 +307,10 @@ export default function CollectPage() {
           </Button>
         </form>
         <EveryoneSoFar
-          people={receipt.people}
+          people={filteredPeople}
           summaries={summary?.people ?? []}
           currentId={null}
+          label={filteredLabel}
           currency={receipt.currency}
           onOpen={openPerson}
         />
@@ -294,26 +344,33 @@ export default function CollectPage() {
               {balanceCents > 0 ? "Take the rest" : "Give the change back"}, then tap how — Cash or QR.
             </p>
           ) : null}
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant={person.paymentMethod === "CASH" ? "primary" : "secondary"}
-              className="flex-1"
-              disabled={busy || !canCollect}
-              onClick={() => void collectWith("CASH")}
-            >
-              Cash
-            </Button>
-            <Button
-              type="button"
-              variant={person.paymentMethod === "QR" ? "primary" : "secondary"}
-              className="flex-1"
-              disabled={busy || !canCollect}
-              onClick={() => void collectWith("QR")}
-            >
-              QR
-            </Button>
-          </div>
+          {canCollect ? (
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={person.paymentMethod === "CASH" ? "primary" : "secondary"}
+                className="flex-1"
+                disabled={busy}
+                onClick={() => void collectWith("CASH")}
+              >
+                {saving === "CASH" ? "Saving…" : "Cash"}
+              </Button>
+              <Button
+                type="button"
+                variant={person.paymentMethod === "QR" ? "primary" : "secondary"}
+                className="flex-1"
+                disabled={busy}
+                onClick={() => void collectWith("QR")}
+              >
+                {saving === "QR" ? "Saving…" : "QR"}
+              </Button>
+            </div>
+          ) : (
+            // Inert Cash/QR buttons here looked live and felt broken when tapped.
+            <p className="m-0 rounded-[10px] bg-inset px-3.5 py-3 text-center text-sm text-mute">
+              Tap what {firstName(person.name)} ordered first, then take cash or QR.
+            </p>
+          )}
           <button
             type="button"
             className={cn(buttonVariants({ variant: "ghost" }), "mt-1 w-full justify-center")}
@@ -323,7 +380,7 @@ export default function CollectPage() {
           </button>
           <p className="mt-2 text-center text-[13px] text-mute">
             {owedCents <= 0
-              ? "Tap what they ordered. You can leave and come back."
+              ? "You can leave and come back to them."
               : person.paymentMethod
                 ? "Change cash or QR if you got it wrong, or come back later."
                 : "Take cash or QR, or come back if you’re not done asking."}
@@ -341,11 +398,12 @@ export default function CollectPage() {
     >
       <StepPath current="Collect" billId={id} />
 
+      {showFilter ? <PaymentFilterControl value={filter} counts={filterCounts} onChange={setFilter} className="mb-3" /> : null}
       <div className="flex items-center justify-between gap-3">
         <p className="m-0 font-mono text-xs text-amber">
           {collectedCount === 1 ? "1st person" : `Person ${receipt.people.findIndex((seat) => seat.id === person.id) + 1}`}
         </p>
-        <SeatChips people={receipt.people} currentId={person.id} unsettledIds={unsettledIds} onOpen={openPerson} />
+        <SeatChips people={chipPeople(person.id)} currentId={person.id} unsettledIds={unsettledIds} onOpen={openPerson} />
       </div>
 
       <h1 className="mt-2.5 text-[46px] leading-[1.02] font-semibold tracking-[-0.035em]">{person.name}</h1>
@@ -457,9 +515,10 @@ export default function CollectPage() {
       )}
 
       <EveryoneSoFar
-        people={receipt.people}
+        people={filteredPeople}
         summaries={summary?.people ?? []}
         currentId={person.id}
+        label={filteredLabel}
         currency={receipt.currency}
         onOpen={openPerson}
       />
@@ -538,12 +597,14 @@ function EveryoneSoFar({
   people,
   summaries,
   currentId,
+  label,
   currency,
   onOpen,
 }: {
   people: PersonDto[];
   summaries: PersonSummaryDto[];
   currentId: string | null;
+  label: string;
   currency: string;
   onOpen: (id: string) => void;
 }) {
@@ -560,7 +621,7 @@ function EveryoneSoFar({
         onClick={() => setOpen((current) => !current)}
       >
         <span className="font-mono text-[11px] text-mute">
-          {currentId ? "Everyone else so far" : "Everyone so far"} · {others.length}
+          {label} · {others.length}
         </span>
         <span className="text-[13px] text-mute underline">{open ? "Hide" : "Check their orders"}</span>
       </button>
