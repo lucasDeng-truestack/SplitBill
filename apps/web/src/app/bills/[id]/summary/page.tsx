@@ -6,10 +6,12 @@ import { formatMoney } from "@splitbill/shared";
 import type { BillSummaryDto } from "@splitbill/shared";
 import { Docket } from "@/components/docket";
 import { Money } from "@/components/money";
+import { PaymentFilterControl, PaymentFilterEmpty } from "@/components/payment-filter";
 import { PersonChip } from "@/components/person-chip";
 import { StepPath } from "@/components/step-path";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
+import { DEFAULT_PAYMENT_FILTER, filterByPayment, paymentFilterCounts, type PaymentFilter } from "@/lib/payment-filter";
 import { firstName } from "@/lib/people";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +20,7 @@ export default function SummaryPage() {
   const [summary, setSummary] = useState<BillSummaryDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState<PaymentFilter>(DEFAULT_PAYMENT_FILTER);
 
   useEffect(() => {
     api
@@ -64,6 +67,10 @@ export default function SummaryPage() {
 
   const leftover = summary.unassignedItems[0];
   const done = summary.status === "COMPLETED";
+  const standingOf = (person: BillSummaryDto["people"][number]) => person;
+  const filterCounts = paymentFilterCounts(summary.people, standingOf);
+  const visiblePeople = filterByPayment(summary.people, standingOf, filter);
+  const showFilter = summary.people.length > 1;
 
   return (
     <Docket
@@ -114,13 +121,18 @@ export default function SummaryPage() {
             : "You’ve collected. Now pay the counter."}
       </p>
 
-      <div className="mt-[22px] flex flex-col">
-        {summary.people.map((person, index) => (
+      {showFilter ? <PaymentFilterControl value={filter} counts={filterCounts} onChange={setFilter} className="mt-4" /> : null}
+      {showFilter && visiblePeople.length === 0 ? (
+        <PaymentFilterEmpty filter={filter} onShowAll={() => setFilter("all")} />
+      ) : null}
+
+      <div className={cn("flex flex-col", showFilter ? "mt-3" : "mt-[22px]")}>
+        {visiblePeople.map((person, index) => (
           <div
             key={person.personId}
             className={cn(
               "border-t border-dashed border-perf py-4",
-              index === summary.people.length - 1 && "border-b",
+              index === visiblePeople.length - 1 && "border-b",
             )}
           >
             <div className="flex items-center gap-3">

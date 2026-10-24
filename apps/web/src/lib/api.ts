@@ -25,16 +25,33 @@ export class ApiError extends Error {
   }
 }
 
+// Photo uploads on cafe Wi-Fi can be slow; everything else should answer well inside this.
+const UPLOAD_TIMEOUT_MS = 60_000;
+const REQUEST_TIMEOUT_MS = 15_000;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (init?.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+  const upload = init?.body instanceof FormData;
+  if (init?.body && !upload && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${API_URL}/api/v1${path}`, {
-    ...init,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}/api/v1${path}`, {
+      ...init,
+      headers,
+      signal: init?.signal ?? AbortSignal.timeout(upload ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    // A dead connection otherwise leaves the screen waiting forever with the buttons greyed out.
+    const timedOut = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
+    throw new ApiError(
+      0,
+      timedOut ? "TIMEOUT" : "NETWORK_ERROR",
+      timedOut ? "That took too long. Check your connection and try again." : "Can’t reach the server. Check your connection and try again.",
+    );
+  }
 
   if (response.status === 204) {
     return undefined as T;
